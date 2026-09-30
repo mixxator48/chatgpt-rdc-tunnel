@@ -95,8 +95,11 @@ chatgpt-rdc-tunnel
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+Get-ChildItem -Recurse | Unblock-File
 .\setup.ps1
 ```
+
+Если проект был скачан ZIP-архивом через браузер, Windows может пометить `.ps1` как файл из интернета. В этом случае `RemoteSigned` всё равно потребует цифровую подпись. Команда `Get-ChildItem -Recurse | Unblock-File` снимает эту метку. При клонировании через `git clone` такая проблема обычно не возникает.
 
 Скрипт:
 1. проверит Node.js и npm;
