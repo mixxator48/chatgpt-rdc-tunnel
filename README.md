@@ -68,6 +68,10 @@ https://platform.openai.com/settings/organization/tunnels
 
 Создайте новый tunnel endpoint и сохраните его `tunnel_id`.
 
+**Важно:** в настройках этого tunnel добавьте association не только с вашей OpenAI Platform Organization, но и с **тем ChatGPT workspace**, в котором будете создавать MCP app/plugin. Без этой association ChatGPT может принять `tunnel_id`, но не сможет нормально создать или обнаружить MCP-приложение.
+
+У пользователя также должны быть права **Tunnels Read + Use** для запуска tunnel-client и подключения tunnel в ChatGPT.
+
 Он выглядит примерно так:
 
 ```text
@@ -209,13 +213,24 @@ Desktop Commander также имеет встроенный список `block
 . $PROFILE
 ```
 
-### Tunnel не виден в ChatGPT
+### Tunnel не виден в ChatGPT или приложение MCP не создаётся
 
 Проверьте:
-- tunnel связан с нужным ChatGPT workspace;
+- tunnel связан с нужным ChatGPT workspace, а не только с Platform Organization;
 - у вашего Platform principal есть **Tunnels Read + Use**;
-- `rc-mcp` сейчас запущен;
-- `tunnel-client doctor` проходит без ошибок.
+- `rc-mcp` сейчас запущен и окно PowerShell остаётся открытым;
+- `tunnel-client doctor` проходит без ошибок;
+- локальный health endpoint отвечает `200 ready`.
+
+Диагностика из корня проекта:
+
+```powershell
+.\\.runtime\\tunnel-client\\tunnel-client.exe doctor --profile rdc-local --profile-dir .\\profiles --explain
+Invoke-WebRequest http://127.0.0.1:8788/readyz -UseBasicParsing
+(Invoke-WebRequest 'http://127.0.0.1:8788/health?details=true' -UseBasicParsing).Content
+```
+
+Ожидается `RESULT ok`, ответ `200 ready` и `ready: true`. Для stdio-конфигурации Desktop Commander в health должен быть `transport: stdio`, а дочерний MCP-процесс должен быть в состоянии `running`.
 
 ### ChatGPT видит старый набор MCP tools
 
