@@ -1,0 +1,9 @@
+{
+  "name": "chatgpt-rdc-tunnel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Run Desktop Commander locally through OpenAI Secure MCP Tunnel",
+  "dependencies": {
+    "@wonderwhy-er/desktop-commander": "0.2.52"
+  }
+}

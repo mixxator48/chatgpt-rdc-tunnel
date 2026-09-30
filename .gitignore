@@ -1,0 +1,9 @@
+node_modules/
+.runtime/
+.secrets/
+profiles/
+logs/
+*.log
+*.zip
+.DS_Store
+Thumbs.db
