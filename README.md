@@ -33,6 +33,13 @@ Windows / файлы / PowerShell / процессы / Git / Node / Python
 - локальный профиль туннеля
 - локальный Runtime API key
 - PowerShell-команда `rc-mcp`
+- локальный UX-patch для Desktop Commander `0.2.52`:
+  - отключает встроенные MCP UI previews;
+  - добавляет batching-подсказки для чтения, записи и shell-команд;
+  - добавляет динамические progress-метки вида `start_process · Проверяю тесты`;
+  - показывает имя конкретного MCP tool без возврата тяжёлых preview-блоков.
+
+Patched-файлы основаны на Desktop Commander 0.2.52 и распространяются вместе с upstream MIT license в `patches/desktop-commander-0.2.52/`.
 
 Секреты и runtime-файлы не попадают в Git.
 

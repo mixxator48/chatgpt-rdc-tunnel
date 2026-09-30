@@ -31,6 +31,33 @@ finally {
     Pop-Location
 }
 
+$DcPackage = Join-Path $Base "node_modules\@wonderwhy-er\desktop-commander\package.json"
+if (-not (Test-Path $DcPackage)) {
+    throw "Desktop Commander package was not installed."
+}
+
+$DcVersion = (Get-Content $DcPackage -Raw | ConvertFrom-Json).version
+if ($DcVersion -ne "0.2.52") {
+    throw "Unsupported Desktop Commander version $DcVersion. This project currently patches 0.2.52 only."
+}
+
+Write-Host "Applying local Desktop Commander UX patch..." -ForegroundColor Cyan
+$PatchRoot = Join-Path $Base "patches\desktop-commander-0.2.52"
+$DcDist = Join-Path $Base "node_modules\@wonderwhy-er\desktop-commander\dist"
+
+Copy-Item (Join-Path $PatchRoot "server.js") (Join-Path $DcDist "server.js") -Force
+Copy-Item (Join-Path $PatchRoot "tools\schemas.js") (Join-Path $DcDist "tools\schemas.js") -Force
+Copy-Item (Join-Path $PatchRoot "utils\mcp-ui-ab-test.js") (Join-Path $DcDist "utils\mcp-ui-ab-test.js") -Force
+
+& node --check (Join-Path $DcDist "server.js")
+if ($LASTEXITCODE -ne 0) { throw "Patched Desktop Commander server.js failed syntax validation." }
+
+& node --check (Join-Path $DcDist "tools\schemas.js")
+if ($LASTEXITCODE -ne 0) { throw "Patched Desktop Commander schemas.js failed syntax validation." }
+
+& node --check (Join-Path $DcDist "utils\mcp-ui-ab-test.js")
+if ($LASTEXITCODE -ne 0) { throw "Patched Desktop Commander mcp-ui-ab-test.js failed syntax validation." }
+
 New-Item -ItemType Directory -Force -Path $Runtime, $ClientDir, $Profiles, $Secrets | Out-Null
 
 $TunnelExe = Join-Path $ClientDir "tunnel-client.exe"
