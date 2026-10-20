@@ -1,3 +1,4 @@
+import fs from 'fs/promises';
 import path from 'path';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, ListResourcesRequestSchema, ReadResourceRequestSchema, ListResourceTemplatesRequestSchema, ListPromptsRequestSchema, InitializeRequestSchema, LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS, } from "@modelcontextprotocol/sdk/types.js";
@@ -9,9 +10,10 @@ const OS_GUIDANCE = getOSSpecificGuidance(SYSTEM_INFO);
 const DEV_TOOL_GUIDANCE = getDevelopmentToolGuidance(SYSTEM_INFO);
 const PATH_GUIDANCE = `IMPORTANT: ${getPathGuidance(SYSTEM_INFO)} Relative paths may fail as they depend on the current working directory. Tilde paths (~/...) might not work in all contexts. Unless the user explicitly asks for relative paths, use absolute paths.`;
 const CMD_PREFIX_DESCRIPTION = `This command can be referenced as "DC: ..." or "use Desktop Commander to ..." in your instructions.`;
-import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema, KillProcessArgsSchema, ReadFileArgsSchema, ReadMultipleFilesArgsSchema, WriteFileArgsSchema, CreateDirectoryArgsSchema, ListDirectoryArgsSchema, MoveFileArgsSchema, GetFileInfoArgsSchema, GetConfigArgsSchema, SetConfigValueArgsSchema, ListProcessesArgsSchema, EditBlockArgsSchema, GetUsageStatsArgsSchema, GiveFeedbackArgsSchema, StartSearchArgsSchema, GetMoreSearchResultsArgsSchema, StopSearchArgsSchema, ListSearchesArgsSchema, GetPromptsArgsSchema, GetRecentToolCallsArgsSchema, WritePdfArgsSchema, toolArgSchemas, } from './tools/schemas.js';
+import { StartProcessArgsSchema, ReadProcessOutputArgsSchema, InteractWithProcessArgsSchema, ForceTerminateArgsSchema, ListSessionsArgsSchema, KillProcessArgsSchema, ReadFileArgsSchema, ReadMultipleFilesArgsSchema, WriteFileArgsSchema, CreateDirectoryArgsSchema, ListDirectoryArgsSchema, MoveFileArgsSchema, GetFileInfoArgsSchema, GetConfigArgsSchema, SetConfigValueArgsSchema, ListProcessesArgsSchema, EditBlockArgsSchema, GetUsageStatsArgsSchema, GiveFeedbackArgsSchema, StartSearchArgsSchema, GetMoreSearchResultsArgsSchema, StopSearchArgsSchema, ListSearchesArgsSchema, GetPromptsArgsSchema, GetRecentToolCallsArgsSchema, WritePdfArgsSchema, PreviewVideoArgsSchema, toolArgSchemas, } from './tools/schemas.js';
 import { detectUnsupportedParams, getSupportedParams, buildUnsupportedParamsWarning, } from './utils/unsupportedParams.js';
 import { getConfig, setConfigValue } from './tools/config.js';
+import { validatePath } from './tools/filesystem.js';
 import { getUsageStats } from './tools/usage.js';
 import { giveFeedbackToDesktopCommander } from './tools/feedback.js';
 import { getPrompts } from './tools/prompts.js';
@@ -23,8 +25,9 @@ import { handleWelcomePageOnboarding, skipWelcomePageOnboarding } from './utils/
 import { VERSION } from './version.js';
 import { capture, capture_call_tool, runInUiOriginCallContext } from "./utils/capture.js";
 import { logToStderr, logger } from './utils/logger.js';
-import { buildUiToolMeta, CONFIG_EDITOR_RESOURCE_URI, FILE_PREVIEW_RESOURCE_URI, } from './ui/contracts.js';
+import { buildUiToolMeta, CONFIG_EDITOR_RESOURCE_URI, FILE_PREVIEW_RESOURCE_URI, VIDEO_PLAYER_RESOURCE_URI, } from './ui/contracts.js';
 import { listUiResources, readUiResource } from './ui/resources.js';
+import { registerPublicMedia, getVideoPreviewLimits } from './ui/video-store.js';
 import { shouldShowMcpUiPreviews } from './utils/mcp-ui-ab-test.js';
 // Store startup messages to send after initialization
 const deferredMessages = [];
@@ -64,6 +67,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     }
     throw new Error(`Unknown resource URI: ${uri}`);
 });
+server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }));
 // Add handler for prompts/list method
 server.setRequestHandler(ListPromptsRequestSchema, async () => {
     // Return an empty list of prompts
@@ -138,10 +142,10 @@ server.setRequestHandler(InitializeRequestSchema, async (request) => {
         const clientInfo = request.params?.clientInfo;
         if (clientInfo) {
             await updateCurrentClient(clientInfo);
-            // Welcome page for new users (A/B test controlled) Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ all clients except
+            // Welcome page for new users (A/B test controlled)  all clients except
             // the Desktop Commander app and remote contexts. Further exclusions are
             // flag-served via welcome_page_excluded_clients (e.g. claude-code, which
-            // covers Claude Code and Cowork plugin sessions Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ both identify as
+            // covers Claude Code and Cowork plugin sessions  both identify as
             // `claude-code` and provide their own onboarding surface).
             const isWelcomePageEligibleClient = currentClient.name !== 'desktop-commander-app'
                 && currentClient.name !== 'desktop-commander'
@@ -157,11 +161,11 @@ server.setRequestHandler(InitializeRequestSchema, async (request) => {
             }
         }
         // Raw host environment signals (no PII, undefined when absent). Some
-        // hosts share a clientInfo name Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ Claude Code CLI, Claude Code inside
-        // the Claude Desktop app, and Cowork all report 'claude-code' Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ and
+        // hosts share a clientInfo name  Claude Code CLI, Claude Code inside
+        // the Claude Desktop app, and Cowork all report 'claude-code'  and
         // these let analytics tell them apart without client-specific
-        // branching in code. Verified signatures: CLI Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ entrypoint 'cli';
-        // CC-in-desktop Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ entrypoint 'claude-desktop'; Cowork Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ no
+        // branching in code. Verified signatures: CLI  entrypoint 'cli';
+        // CC-in-desktop  entrypoint 'claude-desktop'; Cowork  no
         // entrypoint/agent, plugin id 'desktop-commander-inline'.
         // Values truncated to GA4's 100-char param limit (same convention as
         // containerName/containerImage) so an oversized value can never get
@@ -190,6 +194,7 @@ server.setRequestHandler(InitializeRequestSchema, async (request) => {
                 name: "desktop-commander",
                 version: VERSION,
             },
+            instructions: "AUTOMATIC VIDEO PRESENTATION: When the user asks to create, generate, render, edit, convert, export, or download a video and a final video file is successfully produced, automatically call preview_video on the final output unless the user explicitly asks not to show it. Do not ask whether the user wants to see the result. Do not preview intermediate video files or videos that were only inspected, searched, moved, or used as inputs. After a long-running generation process completes and its final output path is known, verify success and then call preview_video. preview_video only prepares the embedded player; do not claim playback or display succeeded merely because the tool succeeded. If the embedded app reports a loading/playback error through model context, acknowledge that error instead of claiming success.",
         };
     }
     catch (error) {
@@ -247,10 +252,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "set_config_value",
                 description: `
                         Set a specific configuration value by key.
-                        
-                        WARNING: Should be used in a separate chat from file operations and 
+
+                        WARNING: Should be used in a separate chat from file operations and
                         command execution to prevent security issues.
-                        
+
                         Config keys include:
                         - blockedCommands (array)
                         - defaultShell (string)
@@ -258,10 +263,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - fileReadLineLimit (number, max lines for read_file)
                         - fileWriteLineLimit (number, max lines per write_file call)
                         - telemetryEnabled (boolean)
-                        
-                        IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access 
+
+                        IMPORTANT: Setting allowedDirectories to an empty array ([]) allows full access
                         to the entire file system, regardless of the operating system.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(SetConfigValueArgsSchema),
                 annotations: {
@@ -275,62 +280,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             {
                 name: "read_file",
                 description: `
-                        Read contents from files and URLs.
-                        Read PDF files and extract content as markdown and images.
-                        
-                        Suitable for reading authorized local files directly without starting a shell command.
+                        Read an authorized local file or URL.
 
-                        BATCHING POLICY: If 2 or more known files need to be read for the same task, prefer read_multiple_files in a single MCP call instead of repeated read_file calls.
-                        
-                        Supports partial file reading with:
-                        - 'offset' (start line, default: 0)
-                          * Positive: Start from line N (0-based indexing)
-                          * Negative: Read last N lines from end (tail behavior)
-                        - 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting, initially 1000)
-                          * Used with positive offsets for range reading
-                          * Ignored when offset is negative (reads all requested tail lines)
-                        
-                        Examples:
-                        - offset: 0, length: 10     Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ First 10 lines
-                        - offset: 100, length: 5    Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Lines 100-104
-                        - offset: -20               Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Last 20 lines  
-                        - offset: -5, length: 10    Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Last 5 lines (length ignored)
-                        
-                        Performance optimizations:
-                        - Large files with negative offsets use reverse reading for efficiency
-                        - Large files with deep positive offsets use byte estimation
-                        - Small files use fast readline streaming
-                        
-                        When reading from the file system, only works within allowed directories.
-                        Can fetch content from URLs when isUrl parameter is set to true
-                        (URLs are always read in full regardless of offset/length).
-                        
-                        FORMAT HANDLING (by extension):
-                        - Text: Uses offset/length for line-based pagination
-                        - Excel (.xlsx, .xls, .xlsm): Returns JSON 2D array
-                          * sheet: "Sheet1" (name) or "0" (index as string, 0-based)
-                          * range: ALWAYS use FROM:TO format (e.g., "A1:D100", "C1:C1", "B2:B50")
-                          * offset/length work as row pagination (optional fallback)
-                        - Images (PNG, JPEG, GIF, WebP): Base64 encoded viewable content
-                        - PDF: Extracts text content as markdown with page structure
-                          * offset/length work as page pagination (0-based)
-                          * Includes embedded images when available
-                        - DOCX (.docx): Two modes depending on parameters:
-                          * DEFAULT (no offset/length): Returns a text-bearing outline Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ shows paragraphs with text,
-                            tables with cell content, styles, image refs. Skips shapes/drawings/SVG noise.
-                            Each element shows its body index [0], [1], etc.
-                          * WITH offset/length: Returns raw pretty-printed XML with line pagination.
-                            Use this to drill into specific sections or see the actual XML for editing.
-                          * EDITING WORKFLOW: 1) read_file to get outline, 2) read_file with offset/length
-                            to see raw XML around what you want to edit, 3) edit_block with old_string/new_string
-                            using XML fragments copied from the read output.
-                          * IMPORTANT: offset MUST be non-zero to get raw XML (use offset=1 to start from line 1).
-                            offset=0 always returns the outline regardless of length.
-                          * For BULK changes (translation, mass replacements): use start_process with Python
-                            zipfile module to find/replace all <w:t> elements at once.
+                        BATCHING POLICY: If two or more known files are needed for the same task, prefer read_multiple_files in one MCP call instead of repeated read_file calls.
 
-                        ${PATH_GUIDANCE}
-                        ${CMD_PREFIX_DESCRIPTION}`,
+                        Pagination:
+                        - offset >= 0 starts at that 0-based line/page/row offset.
+                        - offset < 0 reads from the end of text files.
+                        - length limits the returned range where supported.
+
+                        Format handling includes text, Excel, images, PDF, and DOCX.
+                        Use read_file for one known file and read_multiple_files for batches.
+                        Local filesystem access is constrained by Desktop Commander allowedDirectories.
+                        URLs are fetched in full when isUrl=true.
+`,
                 inputSchema: zodToJsonSchema(ReadFileArgsSchema),
                 _meta: buildUiToolMeta(FILE_PREVIEW_RESOURCE_URI, true, showMcpUiPreviews),
                 annotations: {
@@ -340,19 +303,59 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 },
             },
             {
+                name: "preview_video",
+                description: `
+                        Prepare a supported local video file for an interactive video player directly inside ChatGPT.
+
+                        AUTOMATIC ARTIFACT PRESENTATION:
+                        - Use this tool automatically after a workflow successfully creates, generates, renders, edits, converts, exports, or downloads a FINAL video that is a primary deliverable requested by the user.
+                        - Do not require the user to explicitly ask to preview or display the video.
+                        - Do not ask whether the user wants to see it; prepare the final result automatically unless the user explicitly asks not to.
+                        - Do not automatically preview intermediate renders, source videos, or files that were merely inspected, searched, moved, or used as inputs.
+                        - Do not claim playback succeeded merely because this tool succeeded. The embedded player reports playback errors separately.
+
+                        Supported inline formats: MP4, WebM, Ogg video.
+                        The video is exposed through a temporary tokenized HTTPS media URL while rc-mcp is running.
+                        Default inline preview maximum: 50 MB, configurable with RDC_VIDEO_PREVIEW_MAX_MB.
+
+                        ${PATH_GUIDANCE}
+                        ${CMD_PREFIX_DESCRIPTION}`,
+                inputSchema: zodToJsonSchema(PreviewVideoArgsSchema),
+                outputSchema: {
+                    type: "object",
+                    properties: {
+                        fileName: { type: "string" },
+                        mimeType: { type: "string" },
+                        sizeBytes: { type: "number" },
+                        title: { type: "string" },
+                        expiresInSeconds: { type: "number" }
+                    },
+                    required: ["fileName", "mimeType", "sizeBytes", "title", "expiresInSeconds"],
+                    additionalProperties: false
+                },
+                _meta: buildUiToolMeta(VIDEO_PLAYER_RESOURCE_URI, false, true),
+                annotations: {
+                    title: "Preview Local Video",
+                    readOnlyHint: true,
+                    destructiveHint: false,
+                    openWorldHint: false,
+                    idempotentHint: true,
+                },
+            },
+            {
                 name: "read_multiple_files",
                 description: `
                         Read the contents of multiple files simultaneously.
 
                         PREFERRED BATCH READ: Use this tool whenever 2 or more known files are needed for the same task. Prefer one read_multiple_files call over multiple read_file calls.
-                        
+
                         Each file's content is returned with its path as a reference.
                         Handles text files normally and renders images as viewable content.
                         Recognized image types: PNG, JPEG, GIF, WebP.
-                        
+
                         Failed reads for individual files won't stop the entire operation.
                         Only works within allowed directories.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ReadMultipleFilesArgsSchema),
@@ -368,7 +371,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         IMPORTANT: DO NOT use this tool to create PDF files. Use 'write_pdf' for all PDF creation tasks.
                         DO NOT use this tool to edit DOCX files. Use 'edit_block' with old_string/new_string instead.
-                        To CREATE a new DOCX, use write_file with .docx extension Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ text content with markdown headings (#, ##, ###) is converted to styled DOCX paragraphs.
+                        To CREATE a new DOCX, use write_file with .docx extension  text content with markdown headings (#, ##, ###) is converted to styled DOCX paragraphs.
 
                         BATCHING / WRITE POLICY:
                         - Prefer ONE write_file call when the content fits within the configured fileWriteLineLimit.
@@ -438,7 +441,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         PAGE BREAKS:
                         To force a page break, use this HTML element:
                         <div style="page-break-before: always;"></div>
-                        
+
                         Example:
                         "# Page 1\\n\\n<div style=\\"page-break-before: always;\\"></div>\\n\\n# Page 2"
 
@@ -467,10 +470,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "create_directory",
                 description: `
                         Create a new directory or ensure a directory exists.
-                        
+
                         Can create multiple nested directories in one operation.
                         Only works within allowed directories.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(CreateDirectoryArgsSchema),
@@ -484,33 +487,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "list_directory",
                 description: `
                         Get a detailed listing of all files and directories in a specified path.
-                        
+
                         Use this instead of 'execute_command' with ls/dir commands.
                         Results distinguish between files and directories with [FILE] and [DIR] prefixes.
-                        
+
                         Supports recursive listing with the 'depth' parameter (default: 2):
                         - depth=1: Only direct contents of the directory
                         - depth=2: Contents plus one level of subdirectories
                         - depth=3+: Multiple levels deep
-                        
+
                         CONTEXT OVERFLOW PROTECTION:
                         - Top-level directory shows ALL items
                         - Nested directories are limited to 100 items maximum per directory
                         - When a nested directory has more than 100 items, you'll see a warning like:
                           [WARNING] node_modules: 500 items hidden (showing first 100 of 600 total)
                         - This prevents overwhelming the context with large directories like node_modules
-                        
+
                         Results show full relative paths from the root directory being listed.
                         Example output with depth=2:
                         [DIR] src
                         [FILE] src/index.ts
                         [DIR] src/tools
                         [FILE] src/tools/filesystem.ts
-                        
+
                         If a directory cannot be accessed, it will show [DENIED] instead.
                         If a path does not exist, it will show [NOT_FOUND] instead.
                         Only works within allowed directories.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListDirectoryArgsSchema),
@@ -524,10 +527,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "move_file",
                 description: `
                         Move or rename files and directories.
-                        
+
                         Can move files between directories and rename them in a single operation.
                         Both source and destination must be within allowed directories.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(MoveFileArgsSchema),
@@ -542,39 +545,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "start_search",
                 description: `
                         Start a streaming search that can return results progressively.
-                        
+
                         SEARCH STRATEGY GUIDE:
                         Choose the right search type based on what the user is looking for:
-                        
+
                         USE searchType="files" WHEN:
                         - User asks for specific files: "find package.json", "locate config files"
-                        - Pattern looks like a filename: "*.js", "README.md", "test-*.tsx" 
+                        - Pattern looks like a filename: "*.js", "README.md", "test-*.tsx"
                         - User wants to find files by name/extension: "all TypeScript files", "Python scripts"
                         - Looking for configuration/setup files: ".env", "dockerfile", "tsconfig.json"
-                        
+
                         USE searchType="content" WHEN:
                         - User asks about code/logic: "authentication logic", "error handling", "API calls"
                         - Looking for functions/variables: "getUserData function", "useState hook"
                         - Searching for text/comments: "TODO items", "FIXME comments", "documentation"
                         - Finding patterns in code: "console.log statements", "import statements"
                         - User describes functionality: "components that handle login", "files with database queries"
-                        
+
                         WHEN UNSURE OR USER REQUEST IS AMBIGUOUS:
                         Run TWO searches in parallel - one for files and one for content:
-                        
+
                         Example approach for ambiguous queries like "find authentication stuff":
                         1. Start file search: searchType="files", pattern="auth"
-                        2. Simultaneously start content search: searchType="content", pattern="authentication"  
+                        2. Simultaneously start content search: searchType="content", pattern="authentication"
                         3. Present combined results: "Found 3 auth-related files and 8 files containing authentication code"
-                        
+
                         SEARCH TYPES:
                         - searchType="files": Find files by name (pattern matches file names)
                         - searchType="content": Search inside files for text patterns
-                        
+
                         PATTERN MATCHING MODES:
                         - Default (literalSearch=false): Patterns are treated as regular expressions
                         - Literal (literalSearch=true): Patterns are treated as exact strings
-                        
+
                         WHEN TO USE literalSearch=true:
                         Use literal search when searching for code patterns with special characters:
                         - Function calls with parentheses and quotes
@@ -582,22 +585,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Object methods with dots and parentheses
                         - File paths with backslashes
                         - Any pattern containing: . * + ? ^ $ { } [ ] | \\ ( )
-                        
+
                         IMPORTANT PARAMETERS:
                         - pattern: What to search for (file names OR content text)
                         - literalSearch: Use exact string matching instead of regex (default: false)
                         - filePattern: Optional filter to limit search to specific file types (e.g., "*.js", "package.json")
                         - ignoreCase: Case-insensitive search (default: true). Works for both file names and content.
                         - earlyTermination: Stop search early when exact filename match is found (optional: defaults to true for file searches, false for content searches)
-                        
+
                         DECISION EXAMPLES:
-                        - "find package.json" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ searchType="files", pattern="package.json" (specific file)
-                        - "find authentication components" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ searchType="content", pattern="authentication" (looking for functionality)
-                        - "locate all React components" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ searchType="files", pattern="*.tsx" or "*.jsx" (file pattern)
-                        - "find TODO comments" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ searchType="content", pattern="TODO" (text in files)
-                        - "show me login files" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ AMBIGUOUS Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ run both: files with "login" AND content with "login"
-                        - "find config" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ AMBIGUOUS Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ run both: config files AND files containing config code
-                        
+                        - "find package.json"  searchType="files", pattern="package.json" (specific file)
+                        - "find authentication components"  searchType="content", pattern="authentication" (looking for functionality)
+                        - "locate all React components"  searchType="files", pattern="*.tsx" or "*.jsx" (file pattern)
+                        - "find TODO comments"  searchType="content", pattern="TODO" (text in files)
+                        - "show me login files"  AMBIGUOUS  run both: files with "login" AND content with "login"
+                        - "find config"  AMBIGUOUS  run both: config files AND files containing config code
+
                         COMPREHENSIVE SEARCH EXAMPLES:
                         - Find package.json files: searchType="files", pattern="package.json"
                         - Find all JS files: searchType="files", pattern="*.js"
@@ -606,17 +609,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Ambiguous request "find auth stuff": Run two searches:
                           1. searchType="files", pattern="auth"
                           2. searchType="content", pattern="authentication"
-                        
+
                         PRO TIP: When user requests are ambiguous about whether they want files or content,
                         run both searches concurrently and combine results for comprehensive coverage.
-                        
+
                         Unlike regular search tools, this starts a background search process and returns
                         immediately with a session ID. Use get_more_search_results to get results as they
                         come in, and stop_search to stop the search early if needed.
-                        
+
                         Perfect for large directories where you want to see results immediately and
                         have the option to cancel if the search takes too long or you find what you need.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(StartSearchArgsSchema),
@@ -629,7 +632,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "get_more_search_results",
                 description: `
                         Get more results from an active search with offset-based pagination.
-                        
+
                         Supports partial result reading with:
                         - 'offset' (start result index, default: 0)
                           * Positive: Start from result N (0-based indexing)
@@ -637,17 +640,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - 'length' (max results to read, default: 100)
                           * Used with positive offsets for range reading
                           * Ignored when offset is negative (reads all requested tail results)
-                        
+
                         Examples:
-                        - offset: 0, length: 100     Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ First 100 results
-                        - offset: 200, length: 50    Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Results 200-249
-                        - offset: -20                Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Last 20 results
-                        - offset: -5, length: 10     Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Last 5 results (length ignored)
-                        
+                        - offset: 0, length: 100      First 100 results
+                        - offset: 200, length: 50     Results 200-249
+                        - offset: -20                 Last 20 results
+                        - offset: -5, length: 10      Last 5 results (length ignored)
+
                         Returns only results in the specified range, along with search status.
                         Works like read_process_output - call this repeatedly to get progressive
                         results from a search started with start_search.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetMoreSearchResultsArgsSchema),
                 annotations: {
@@ -659,14 +662,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "stop_search",
                 description: `
                         Stop an active search.
-                        
+
                         Stops the background search process gracefully. Use this when you've found
                         what you need or if a search is taking too long. Similar to force_terminate
                         for terminal processes.
-                        
+
                         The search will still be available for reading final results until it's
                         automatically cleaned up after 5 minutes.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(StopSearchArgsSchema),
                 annotations: {
@@ -679,11 +682,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "list_searches",
                 description: `
                         List all active searches.
-                        
+
                         Shows search IDs, search types, patterns, status, and runtime.
                         Similar to list_sessions for terminal processes. Useful for managing
                         multiple concurrent searches.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListSearchesArgsSchema),
                 annotations: {
@@ -706,7 +709,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - sheets (for Excel files - array of {name, rowCount, colCount})
 
                         Only works within allowed directories.
-                        
+
                         ${PATH_GUIDANCE}
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetFileInfoArgsSchema),
@@ -743,7 +746,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
                         DOCX FILES (.docx) - XML Find/Replace mode:
                         Takes same parameters as text files (old_string, new_string, expected_replacements).
-                        Operates on the pretty-printed XML inside the DOCX Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ the same XML you see from
+                        Operates on the pretty-printed XML inside the DOCX  the same XML you see from
                         read_file with offset/length. Copy XML fragments from read output as old_string.
                         After editing, the XML is repacked into a valid DOCX.
                         Also searches headers/footers if not found in document body.
@@ -788,19 +791,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         Start a terminal process on the authorized device with intelligent state detection.
 
                         PROGRESS LABEL: Always set task_label to a short, human-readable 2-6 word description of what this specific call is doing in the user task. Do not include the MCP tool name; the server prefixes it automatically.
-                        
+
                         Suitable for shell commands, interactive REPL sessions, data-processing scripts,
                         programmatic file analysis, and other long-running terminal work.
 
                         BATCHING POLICY: When several related shell commands form one logical operation, combine them into one start_process call when safe (for example: inspect + validate, build + test, or git status + diff). Prefer one bounded script/command chain over many separate MCP calls. Do not batch unrelated or riskier actions merely to reduce call count.
-                        
+
                         ${OS_GUIDANCE}
-                        
+
                         Examples:
-                        Р В Р вЂ Р В РІР‚С™Р РЋРЎвЂє start_process("python3 -i") Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Start an interactive Python REPL
-                        Р В Р вЂ Р В РІР‚С™Р РЋРЎвЂє start_process("node -i") Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Start an interactive Node.js REPL
-                        Р В Р вЂ Р В РІР‚С™Р РЋРЎвЂє start_process("node:local") Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Run stateless Node.js code on the MCP server
-                        Р В Р вЂ Р В РІР‚С™Р РЋРЎвЂє start_process("wc -l /path/file.csv") Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Run a one-shot shell command
+                         start_process("python3 -i")  Start an interactive Python REPL
+                         start_process("node -i")  Start an interactive Node.js REPL
+                         start_process("node:local")  Run stateless Node.js code on the MCP server
+                         start_process("wc -l /path/file.csv")  Run a one-shot shell command
 
                         Interactive process sessions support follow-up input after they are started.
                         Long-running process sessions expose newly available output while they remain active.
@@ -812,7 +815,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Identifies when a process is waiting for input
                         - Recognizes process completion vs timeout
                         - Early exit prevents unnecessary waiting
-                        
+
                         STATES DETECTED:
                         Process waiting for input (shows prompt)
                         Process finished execution
@@ -839,31 +842,31 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "read_process_output",
                 description: `
                         Read output from a running process with file-like pagination support.
-                        
+
                         Supports partial output reading with offset and length parameters (like read_file):
                         - 'offset' (start line, default: 0)
                           * offset=0: Read NEW output since last read (default, like old behavior)
                           * Positive: Read from absolute line position
                           * Negative: Read last N lines from end (tail behavior)
                         - 'length' (max lines to read, default: configurable via 'fileReadLineLimit' setting)
-                        
+
                         Examples:
-                        - offset: 0, length: 100     Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ First 100 NEW lines since last read
-                        - offset: 0                  Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ All new lines (respects config limit)
-                        - offset: 500, length: 50    Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Lines 500-549 (absolute position)
-                        - offset: -20                Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Last 20 lines (tail)
-                        - offset: -50, length: 10    Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ Start 50 from end, read 10 lines
-                        
+                        - offset: 0, length: 100      First 100 NEW lines since last read
+                        - offset: 0                   All new lines (respects config limit)
+                        - offset: 500, length: 50     Lines 500-549 (absolute position)
+                        - offset: -20                 Last 20 lines (tail)
+                        - offset: -50, length: 10     Start 50 from end, read 10 lines
+
                         OUTPUT PROTECTION:
                         - Uses same fileReadLineLimit as read_file (default: 1000 lines)
                         - Returns status like: [Reading 100 lines from line 0 (total: 5000 lines, 4900 remaining)]
                         - Prevents context overflow from verbose processes
-                        
+
                         SMART FEATURES:
                         - For offset=0, waits up to timeout_ms for new output to arrive
                         - Detects REPL prompts and process completion
                         - Shows process state (waiting for input, finished, etc.)
-                        
+
                         DETECTION STATES:
                         Process waiting for input (ready for interact_with_process)
                         Process finished execution
@@ -880,21 +883,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "interact_with_process",
                 description: `
                         Send input to an existing terminal or REPL process and return newly available output.
-                        
+
                         Useful for interactive shells, Python/Node/R/Julia REPLs, database consoles,
                         and long-running commands started with start_process().
-                        
+
                         Examples:
                         - Interactive Python REPL sessions can be started with \`python3 -i\`.
                         - Existing interactive sessions accept additional input such as imports or analysis commands.
                         - Interactive sessions can return newly available output while they remain active.
-                        
+
                         SMART DETECTION:
                         - Automatically waits for a recognized prompt when requested
                         - Detects errors and completion states
                         - Early exit prevents unnecessary waiting
                         - Cleans common REPL prompt text from returned output
-                        
+
                         PARAMETERS:
                         - pid: Process ID returned by start_process
                         - input: Text or command to send to the process
@@ -923,7 +926,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "force_terminate",
                 description: `
                         Force terminate a running terminal session.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ForceTerminateArgsSchema),
                 annotations: {
@@ -937,17 +940,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "list_sessions",
                 description: `
                         List all active terminal sessions.
-                        
+
                         Shows session status including:
-                        - PID: Process identifier  
+                        - PID: Process identifier
                         - Blocked: Whether session is waiting for input
                         - Runtime: How long the session has been running
-                        
+
                         DEBUGGING REPLs:
                         - "Blocked: true" often means REPL is waiting for input
                         - Use this to verify sessions are running before sending input
                         - Long runtime with blocked status may indicate stuck process
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListSessionsArgsSchema),
                 annotations: {
@@ -959,9 +962,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "list_processes",
                 description: `
                         List all running processes.
-                        
+
                         Returns process information including PID, command name, CPU usage, and memory usage.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(ListProcessesArgsSchema),
                 annotations: {
@@ -989,9 +992,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "get_usage_stats",
                 description: `
                         Get usage statistics for debugging and analysis.
-                        
+
                         Returns summary of tool usage, success/failure rates, and performance metrics.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetUsageStatsArgsSchema),
                 annotations: {
@@ -1004,17 +1007,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 description: `
                         Get recent local tool call history with arguments and outputs.
                         Returns a chronological list of recent calls loaded from the local history file.
-                        
+
                         Useful for:
                         - Onboarding new chats about work already done
                         - Recovering context after chat history loss
                         - Debugging tool call sequences
-                        
+
                         Note: Does not track its own calls or track_ui_event.
                         History is persisted locally in tool-history.jsonl, keeps up to the last 1000
                         calls in memory, and trims older on-disk history. Stored outputs over 4 KiB
                         are replaced with an omission marker.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GetRecentToolCallsArgsSchema),
                 annotations: {
@@ -1026,10 +1029,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "give_feedback_to_desktop_commander",
                 description: `
                         Open feedback form in browser to provide feedback about Desktop Commander.
-                        
+
                         IMPORTANT: This tool simply opens the feedback form - no pre-filling available.
                         The user will fill out the form manually in their browser.
-                        
+
                         WORKFLOW:
                         1. When user agrees to give feedback, just call this tool immediately
                         2. No need to ask questions or collect information
@@ -1038,7 +1041,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                            - days_using: How many days they've used Desktop Commander
                            - platform: Their operating system (Mac/Windows/Linux)
                            - client_id: Analytics identifier
-                        
+
                         All survey questions will be answered directly in the form:
                         - Job title and technical comfort level
                         - Company URL for industry context
@@ -1048,14 +1051,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         - Recommendation likelihood (0-10)
                         - User study participation interest
                         - Email and any additional feedback
-                        
+
                         EXAMPLE INTERACTION:
                         User: "sure, I'll give feedback"
                         Claude: "Perfect! Let me open the feedback form for you."
                         [calls tool immediately]
-                        
+
                         No parameters are needed - just call the tool to open the form.
-                        
+
                         ${CMD_PREFIX_DESCRIPTION}`,
                 inputSchema: zodToJsonSchema(GiveFeedbackArgsSchema),
                 annotations: {
@@ -1068,24 +1071,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 name: "get_prompts",
                 description: `
                         Retrieve a specific Desktop Commander onboarding prompt by ID and execute it.
-                        
+
                         SIMPLIFIED ONBOARDING V2: This tool only supports direct prompt retrieval.
                         The onboarding system presents 5 options as a simple numbered list:
-                        
+
                         1. Organize my Downloads folder (promptId: 'onb2_01')
                         2. Explain a codebase or repository (promptId: 'onb2_02')
                         3. Create organized knowledge base (promptId: 'onb2_03')
                         4. Analyze a data file (promptId: 'onb2_04')
                         5. Check system health and resources (promptId: 'onb2_05')
-                        
+
                         USAGE:
                         When user says "1", "2", "3", "4", or "5" from onboarding:
-                        - "1" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ get_prompts(action='get_prompt', promptId='onb2_01')
-                        - "2" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ get_prompts(action='get_prompt', promptId='onb2_02')
-                        - "3" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ get_prompts(action='get_prompt', promptId='onb2_03')
-                        - "4" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ get_prompts(action='get_prompt', promptId='onb2_04')
-                        - "5" Р В Р вЂ Р Р†Р вЂљР’В Р Р†Р вЂљРІвЂћСћ get_prompts(action='get_prompt', promptId='onb2_05')
-                        
+                        - "1"  get_prompts(action='get_prompt', promptId='onb2_01')
+                        - "2"  get_prompts(action='get_prompt', promptId='onb2_02')
+                        - "3"  get_prompts(action='get_prompt', promptId='onb2_03')
+                        - "4"  get_prompts(action='get_prompt', promptId='onb2_04')
+                        - "5"  get_prompts(action='get_prompt', promptId='onb2_05')
+
                         The prompt content will be injected and execution begins immediately.
 
                         ${CMD_PREFIX_DESCRIPTION}`,
@@ -1145,7 +1148,7 @@ async function handleCallToolRequest(request) {
                             progressToken,
                             progress: 0,
                             total: 1,
-                            message: `${name} В· ${taskLabel}`,
+                            message: `${name} - ${taskLabel}`,
                         },
                     });
                 }
@@ -1164,7 +1167,7 @@ async function handleCallToolRequest(request) {
             telemetryData.remote = String(metadata.remote);
             // Remote calls carry the originating MCP client (e.g. openai-mcp,
             // claude-ai) in _meta.clientInfo. Attribute this call to that remote
-            // client Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ NOT the device's own currentClient. Fall back to a sentinel
+            // client  NOT the device's own currentClient. Fall back to a sentinel
             // when it's absent so the call is visibly remote-but-unattributed
             // rather than masquerading as the local device client. We deliberately
             // do NOT call updateCurrentClient here: currentClient tracks the LOCAL
@@ -1178,7 +1181,7 @@ async function handleCallToolRequest(request) {
             telemetryData.client_version = remoteClient.version;
         }
         else {
-            // Local call Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ clear any remote attribution left by a prior call.
+            // Local call  clear any remote attribution left by a prior call.
             setCurrentRemoteClient(null);
         }
         if (name === 'set_config_value' && args && typeof args === 'object' && 'key' in args) {
@@ -1342,6 +1345,61 @@ async function handleCallToolRequest(request) {
                 break;
             // Note: REPL functionality removed in favor of using general terminal commands
             // Filesystem tools
+            case "preview_video":
+                try {
+                    const parsed = PreviewVideoArgsSchema.parse(args || {});
+                    const validatedPath = await validatePath(parsed.path);
+                    const extension = path.extname(validatedPath).toLowerCase();
+                    const mimeTypes = {
+                        ".mp4": "video/mp4",
+                        ".webm": "video/webm",
+                        ".ogg": "video/ogg",
+                        ".ogv": "video/ogg",
+                    };
+                    const mimeType = mimeTypes[extension];
+                    if (!mimeType) {
+                        throw new Error("Unsupported video format: " + (extension || "(no extension)") + ". Supported: .mp4, .webm, .ogg, .ogv");
+                    }
+                    const stat = await fs.stat(validatedPath);
+                    if (!stat.isFile() || stat.size <= 0) {
+                        throw new Error("Video path does not point to a non-empty file.");
+                    }
+                    const limits = getVideoPreviewLimits();
+                    if (stat.size > limits.maxVideoBytes) {
+                        throw new Error("Video is " + (stat.size / 1024 / 1024).toFixed(1) + " MB; inline preview limit is " + (limits.maxVideoBytes / 1024 / 1024).toFixed(0) + " MB.");
+                    }
+                    const fileName = path.basename(validatedPath);
+                    const title = parsed.title || fileName;
+                    const media = await registerPublicMedia(validatedPath, {
+                        mimeType,
+                        fileName,
+                        sizeBytes: stat.size,
+                        title,
+                    });
+                    result = {
+                        structuredContent: {
+                            fileName,
+                            mimeType,
+                            sizeBytes: stat.size,
+                            title,
+                            expiresInSeconds: media.expiresInSeconds,
+                        },
+                        content: [{
+                            type: "text",
+                            text: "Video prepared for inline preview: " + fileName + " (" + (stat.size / 1024 / 1024).toFixed(1) + " MB).",
+                        }],
+                        _meta: {
+                            mediaUrl: media.mediaUrl,
+                        },
+                    };
+                }
+                catch (error) {
+                    result = {
+                        content: [{ type: "text", text: "Error: Failed to prepare video preview: " + (error instanceof Error ? error.message : String(error)) }],
+                        isError: true,
+                    };
+                }
+                break;
             case "read_file":
                 result = await handlers.handleReadFile(args);
                 break;
@@ -1520,7 +1578,7 @@ async function handleCallToolRequest(request) {
         // timing. In a finally so it still fires on the hard-crash path (the catch
         // above). Only missed if a tool never returns or throws (a true hang).
         // Not emitted for track_ui_event (it is just the transport for
-        // mcp_ui_event) Р В Р вЂ Р В РІР‚С™Р Р†Р вЂљРЎСљ and UI-origin calls are dropped wholesale by the
+        // mcp_ui_event)  and UI-origin calls are dropped wholesale by the
         // capture layer, so server_call_tool reflects only genuine
         // agent-driven tool calls.
         if (name !== 'track_ui_event') {

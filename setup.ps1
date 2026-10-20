@@ -45,18 +45,45 @@ Write-Host "Applying local Desktop Commander UX patch..." -ForegroundColor Cyan
 $PatchRoot = Join-Path $Base "patches\desktop-commander-0.2.52"
 $DcDist = Join-Path $Base "node_modules\@wonderwhy-er\desktop-commander\dist"
 
-Copy-Item (Join-Path $PatchRoot "server.js") (Join-Path $DcDist "server.js") -Force
-Copy-Item (Join-Path $PatchRoot "tools\schemas.js") (Join-Path $DcDist "tools\schemas.js") -Force
-Copy-Item (Join-Path $PatchRoot "utils\mcp-ui-ab-test.js") (Join-Path $DcDist "utils\mcp-ui-ab-test.js") -Force
+$PatchFiles = @(
+    "server.js",
+    "tools\schemas.js",
+    "utils\mcp-ui-ab-test.js",
+    "ui\contracts.js",
+    "ui\resources.js",
+    "ui\video-store.js",
+    "ui\video-player\index.html",
+    "ui\video-player\styles.css",
+    "ui\video-player\video-player-src.js",
+    "ui\video-player\video-player-runtime.js"
+)
 
-& node --check (Join-Path $DcDist "server.js")
-if ($LASTEXITCODE -ne 0) { throw "Patched Desktop Commander server.js failed syntax validation." }
+foreach ($RelativePath in $PatchFiles) {
+    $Source = Join-Path $PatchRoot $RelativePath
+    $Target = Join-Path $DcDist $RelativePath
+    if (-not (Test-Path $Source)) {
+        throw "Patch file is missing: $Source"
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
+    Copy-Item $Source $Target -Force
+}
 
-& node --check (Join-Path $DcDist "tools\schemas.js")
-if ($LASTEXITCODE -ne 0) { throw "Patched Desktop Commander schemas.js failed syntax validation." }
+$SyntaxChecks = @(
+    "server.js",
+    "tools\schemas.js",
+    "utils\mcp-ui-ab-test.js",
+    "ui\contracts.js",
+    "ui\resources.js",
+    "ui\video-store.js",
+    "ui\video-player\video-player-runtime.js"
+)
 
-& node --check (Join-Path $DcDist "utils\mcp-ui-ab-test.js")
-if ($LASTEXITCODE -ne 0) { throw "Patched Desktop Commander mcp-ui-ab-test.js failed syntax validation." }
+foreach ($RelativePath in $SyntaxChecks) {
+    & node --check (Join-Path $DcDist $RelativePath)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Patched Desktop Commander file failed syntax validation: $RelativePath"
+    }
+}
 
 New-Item -ItemType Directory -Force -Path $Runtime, $ClientDir, $Profiles, $Secrets | Out-Null
 

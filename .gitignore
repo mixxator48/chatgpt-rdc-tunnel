@@ -7,3 +7,5 @@ logs/
 *.zip
 .DS_Store
 Thumbs.db
+*.bak
+test-*.mjs

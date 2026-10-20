@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RDC Video Player</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="card">
+    <header>
+      <div class="titles">
+        <div id="title" class="title">Video preview</div>
+        <div id="meta" class="meta">Preparing local video...</div>
+      </div>
+      <div class="actions">
+        <button id="retry" type="button" hidden>Retry</button>
+        <button id="fullscreen" type="button">Fullscreen</button>
+        <button id="pip" type="button">PiP</button>
+      </div>
+    </header>
+    <section class="player">
+      <video id="video" controls playsinline preload="metadata"></video>
+      <div id="status" class="status">Loading video...</div>
+    </section>
+  </main>
+  <script src="./video-player-runtime.js"></script>
+</body>
+</html>

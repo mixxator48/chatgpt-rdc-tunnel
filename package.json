@@ -1,9 +1,16 @@
 {
-  "name": "chatgpt-rdc-tunnel",
-  "version": "1.0.0",
-  "private": true,
-  "description": "Run Desktop Commander locally through OpenAI Secure MCP Tunnel",
-  "dependencies": {
-    "@wonderwhy-er/desktop-commander": "0.2.52"
-  }
+    "name":  "chatgpt-rdc-tunnel",
+    "version":  "1.1.0",
+    "private":  true,
+    "description":  "Run Desktop Commander locally through OpenAI Secure MCP Tunnel",
+    "dependencies":  {
+                         "@wonderwhy-er/desktop-commander":  "0.2.52"
+                     },
+    "devDependencies":  {
+                            "@modelcontextprotocol/ext-apps":  "^2.0.3",
+                            "esbuild":  "^0.27.2"
+                        },
+    "scripts":  {
+                    "build:video-ui":  "esbuild patches/desktop-commander-0.2.52/ui/video-player/video-player-src.js --bundle --format=iife --platform=browser --target=es2020 --outfile=patches/desktop-commander-0.2.52/ui/video-player/video-player-runtime.js"
+                }
 }

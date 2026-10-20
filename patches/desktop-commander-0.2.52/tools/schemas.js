@@ -64,6 +64,11 @@ export const ReadMultipleFilesArgsSchema = z.object({
     task_label: z.string().min(2).max(64).describe("Short human-readable 2-6 word description of what this specific tool call is doing in the current user task. Always provide it. Do not include the MCP tool name; the server prefixes it automatically.").optional(),
     paths: z.array(z.string()),
 });
+export const PreviewVideoArgsSchema = z.object({
+    task_label: z.string().min(2).max(64).describe("Short human-readable 2-6 word description of what this specific tool call is doing in the current user task. Always provide it. Do not include the MCP tool name; the server prefixes it automatically.").optional(),
+    path: z.string(),
+    title: z.string().min(1).max(160).optional(),
+});
 export const WriteFileArgsSchema = z.object({
     task_label: z.string().min(2).max(64).describe("Short human-readable 2-6 word description of what this specific tool call is doing in the current user task. Always provide it. Do not include the MCP tool name; the server prefixes it automatically.").optional(),
     path: z.string(),
@@ -164,7 +169,7 @@ export const GiveFeedbackArgsSchema = z.object({
 // No parameters needed - form will be filled manually by user
 // Only auto-filled hidden fields remain:
 // - tool_call_count (auto)
-// - days_using (auto) 
+// - days_using (auto)
 // - platform (auto)
 // - client_id (auto)
 });
@@ -223,6 +228,7 @@ export const toolArgSchemas = {
     get_config: GetConfigArgsSchema,
     set_config_value: SetConfigValueArgsSchema,
     read_file: ReadFileArgsSchema,
+    preview_video: PreviewVideoArgsSchema,
     read_multiple_files: ReadMultipleFilesArgsSchema,
     write_file: WriteFileArgsSchema,
     write_pdf: WritePdfArgsSchema,
